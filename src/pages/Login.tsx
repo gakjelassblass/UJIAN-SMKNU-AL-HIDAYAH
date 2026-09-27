@@ -127,28 +127,6 @@ export default function Login() {
               </button>
             </div>
           </form>
-
-          <div className="mt-6 pt-4 border-t border-gray-200">
-            <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
-              <p className="text-xs font-semibold text-emerald-800 mb-1">
-                Akun Default Administrator:
-              </p>
-              <div className="text-xs text-gray-700 flex flex-col gap-0.5 font-mono">
-                <div>Username: <span className="font-bold text-emerald-900">admin</span></div>
-                <div>Password: <span className="font-bold text-emerald-900">password</span></div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setUsername('admin');
-                  setPassword('password');
-                }}
-                className="mt-2 text-xs font-medium text-emerald-700 bg-white hover:bg-emerald-100 border border-emerald-300 rounded px-2.5 py-1 w-full text-center transition-colors"
-              >
-                Isi Otomatis Akun Admin
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     </div>
