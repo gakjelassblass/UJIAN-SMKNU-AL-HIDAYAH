@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { db } from '../lib/db';
-import { Exam, Attempt, Answer, ExamSchedule, TimeSlot, AppSettings } from '../types';
+import { Exam, Attempt, Answer, ExamSchedule, TimeSlot, AppSettings, Question } from '../types';
 import { toast } from 'sonner';
-import { Clock, AlertCircle, Camera, XCircle } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { Clock, AlertCircle, Camera, XCircle, Trophy, Award, CheckCircle2, ArrowRight } from 'lucide-react';
+import { cn, shuffleArrayWithSeed } from '../lib/utils';
+import { gradeEssayAnswer } from '../lib/documentParser';
 import ConfirmModal from '../components/ConfirmModal';
 
 export default function TakeExam() {
@@ -28,6 +29,17 @@ export default function TakeExam() {
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasTakenInitialSnapshot, setHasTakenInitialSnapshot] = useState(false);
+  const [submissionResult, setSubmissionResult] = useState<{
+    totalScore: number;
+    mcqCorrect: number;
+    mcqTotal: number;
+    mcqScore: number;
+    essayEarned: number;
+    essayTotalPossible: number;
+    essayCount: number;
+    isSimulation?: boolean;
+    examTitle: string;
+  } | null>(null);
   const questionsPerPage = 10;
 
   const takeSnapshot = React.useCallback(() => {
@@ -86,6 +98,10 @@ export default function TakeExam() {
           const allUsers = await db.users.getAll();
           const admin = allUsers.find(u => u.role === 'admin');
           
+          const initialQuestionOrder = foundExam.shuffleQuestions
+            ? shuffleArrayWithSeed(foundExam.questions, `${user.id}-${id}`).map(q => q.id)
+            : undefined;
+
           const newAttempt: Attempt = {
             id: `attempt-${Date.now()}`,
             examId: id,
@@ -93,6 +109,7 @@ export default function TakeExam() {
             startTime: Date.now(),
             answers: {},
             isGraded: false,
+            questionOrder: initialQuestionOrder,
             korektorId: foundExam.korektorId || admin?.id || 'admin-default'
           };
           await db.attempts.add(newAttempt);
@@ -154,6 +171,10 @@ export default function TakeExam() {
         const remaining = (foundSchedule.durationMinutes * 60) - elapsed;
         setTimeLeft(Math.max(0, remaining));
       } else {
+        const initialQuestionOrder = (foundExam.shuffleQuestions || foundSchedule.shuffleQuestions)
+          ? shuffleArrayWithSeed(foundExam.questions, `${user.id}-${id}`).map(q => q.id)
+          : undefined;
+
         const newAttempt: Attempt = {
           id: `attempt-${Date.now()}`,
           examId: id,
@@ -161,6 +182,7 @@ export default function TakeExam() {
           startTime: Date.now(),
           answers: {},
           isGraded: false,
+          questionOrder: initialQuestionOrder,
           korektorId: foundSchedule.korektorId
         };
         await db.attempts.add(newAttempt);
@@ -171,8 +193,32 @@ export default function TakeExam() {
     fetchExamData();
   }, [id, user, navigate]);
 
-  const totalPages = exam ? Math.ceil(exam.questions.length / questionsPerPage) : 0;
-  const currentQuestions = exam ? exam.questions.slice((currentPage - 1) * questionsPerPage, currentPage * questionsPerPage) : [];
+  const orderedQuestions = React.useMemo(() => {
+    if (!exam || !exam.questions || exam.questions.length === 0) return [];
+
+    const shouldShuffle = exam.shuffleQuestions ?? false;
+    if (!shouldShuffle) {
+      return exam.questions;
+    }
+
+    if (attempt?.questionOrder && attempt.questionOrder.length === exam.questions.length) {
+      const qMap = new Map(exam.questions.map(q => [q.id, q]));
+      const reconstructed = attempt.questionOrder
+        .map(qid => qMap.get(qid))
+        .filter((q): q is Question => q !== undefined);
+      
+      if (reconstructed.length === exam.questions.length) {
+        return reconstructed;
+      }
+    }
+
+    // Fallback deterministic seed
+    const seed = `${user?.id || 'student'}-${exam.id}`;
+    return shuffleArrayWithSeed(exam.questions, seed);
+  }, [exam, attempt?.questionOrder, user?.id]);
+
+  const totalPages = orderedQuestions.length > 0 ? Math.ceil(orderedQuestions.length / questionsPerPage) : 0;
+  const currentQuestions = orderedQuestions.slice((currentPage - 1) * questionsPerPage, currentPage * questionsPerPage);
 
   const handleSubmit = React.useCallback(async () => {
     if (!attempt || !exam || isSubmitting) return;
@@ -186,41 +232,95 @@ export default function TakeExam() {
         finalSnapshot = takeSnapshot();
       }
 
-      // Calculate score for multiple choice
-      let mcScore = 0;
-      let hasEssay = false;
+      // Calculate score for multiple choice & essay
+      let mcqCorrect = 0;
+      let mcqTotal = 0;
+      let mcqScoreEarned = 0;
+      const mcqUnitScore = exam.mcqScore || 1;
+
+      let essayEarned = 0;
+      let essayTotalPossible = 0;
+      let essayCount = 0;
+
+      const updatedAnswers: Record<string, Answer> = { ...answers };
 
       exam.questions.forEach(q => {
+        const studentAns = (answers[q.id]?.value || '').trim();
+
         if (q.type === 'multiple_choice') {
-          const ans = answers[q.id]?.value;
-          if (ans === q.correctAnswer) {
-            mcScore += 1;
+          mcqTotal += 1;
+          const cleanCorrect = (q.correctAnswer || '').trim().toUpperCase();
+          const isCorrect = cleanCorrect !== '' && studentAns.toUpperCase() === cleanCorrect;
+          
+          if (isCorrect) {
+            mcqCorrect += 1;
+            mcqScoreEarned += mcqUnitScore;
           }
+          updatedAnswers[q.id] = {
+            questionId: q.id,
+            value: studentAns,
+            score: isCorrect ? mcqUnitScore : 0
+          };
         } else {
-          hasEssay = true;
+          // Essay Question
+          essayCount += 1;
+          const maxScore = q.maxScore || 10;
+          essayTotalPossible += maxScore;
+          const earned = gradeEssayAnswer(studentAns, q.correctAnswer || '', maxScore);
+          essayEarned += earned;
+          updatedAnswers[q.id] = {
+            questionId: q.id,
+            value: studentAns,
+            score: earned
+          };
         }
       });
 
+      // Total score calculation (scaled to 0 - 100)
+      const totalPossiblePoints = (mcqTotal * mcqUnitScore) + essayTotalPossible;
+      const totalEarnedPoints = mcqScoreEarned + essayEarned;
+      const finalScaledScore = totalPossiblePoints > 0
+        ? Math.round((totalEarnedPoints / totalPossiblePoints) * 100 * 10) / 10
+        : 0;
+
       const finalAttempt: Attempt = {
         ...attempt,
-        answers,
+        answers: updatedAnswers,
         endTime: Date.now(),
-        isGraded: !hasEssay,
+        isGraded: true,
         latestCameraSnapshot: finalSnapshot || attempt.latestCameraSnapshot || null,
-        totalScore: hasEssay ? (mcScore * (exam.mcqScore || 1)) : (mcScore * (exam.mcqScore || 1))
+        totalScore: finalScaledScore
       };
 
       await db.attempts.update(finalAttempt);
       setIsConfirmModalOpen(false);
-      toast.success('Ujian berhasil dikumpulkan');
-      navigate('/dashboard');
+
+      // Stop camera stream safely
+      if ((window as any).localStream) {
+        (window as any).localStream.getTracks().forEach((track: any) => track.stop());
+        (window as any).localStream = null;
+      }
+
+      toast.success('Ujian berhasil dikumpulkan & dinilai otomatis!');
+
+      setSubmissionResult({
+        totalScore: finalScaledScore,
+        mcqCorrect,
+        mcqTotal,
+        mcqScore: mcqScoreEarned,
+        essayEarned,
+        essayTotalPossible,
+        essayCount,
+        isSimulation: exam.isSimulation,
+        examTitle: exam.title
+      });
     } catch (error) {
       console.error('Error submitting exam:', error);
       toast.error('Gagal mengumpulkan ujian. Silakan periksa koneksi internet Anda dan coba lagi.');
     } finally {
       setIsSubmitting(false);
     }
-  }, [attempt, exam, answers, navigate, isSubmitting, takeSnapshot, appSettings]);
+  }, [attempt, exam, answers, isSubmitting, takeSnapshot, appSettings]);
 
   const [cameraError, setCameraError] = useState<string | null>(null);
 
@@ -662,6 +762,109 @@ export default function TakeExam() {
             onCancel={() => setIsConfirmModalOpen(false)}
           />
         </>
+      )}
+
+      {/* Immediate Score Result Modal */}
+      {submissionResult && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-gray-100 text-center animate-in zoom-in-95 duration-200">
+            {/* Header Banner */}
+            <div className="bg-gradient-to-br from-emerald-600 via-teal-600 to-emerald-800 p-6 text-white relative">
+              <div className="w-16 h-16 bg-white/20 rounded-2xl mx-auto flex items-center justify-center backdrop-blur-xs mb-3 shadow-inner">
+                <Trophy className="w-9 h-9 text-amber-300 animate-bounce" />
+              </div>
+              <h3 className="text-xl font-extrabold">
+                {submissionResult.isSimulation ? 'Simulasi Ujian Selesai!' : 'Ujian Berhasil Dikumpulkan!'}
+              </h3>
+              <p className="text-xs text-emerald-100 mt-1 max-w-xs mx-auto">
+                {submissionResult.examTitle}
+              </p>
+            </div>
+
+            {/* Score Centerpiece */}
+            <div className="p-6 space-y-6">
+              <div className="bg-emerald-50/70 border-2 border-emerald-200 rounded-2xl p-5 max-w-xs mx-auto shadow-sm">
+                <div className="text-xs font-bold text-emerald-800 uppercase tracking-widest">
+                  Nilai Akhir
+                </div>
+                <div className="text-5xl font-black text-emerald-700 my-1 tracking-tight">
+                  {submissionResult.totalScore.toFixed(1)}
+                </div>
+                <div className="text-[11px] font-semibold text-gray-500">
+                  Skala Nilai 0 - 100
+                </div>
+
+                {/* Performance Badge */}
+                <div className="mt-3">
+                  <span className={cn(
+                    "inline-flex items-center px-3 py-1 rounded-full text-xs font-bold shadow-xs",
+                    submissionResult.totalScore >= 85
+                      ? "bg-emerald-600 text-white"
+                      : submissionResult.totalScore >= 75
+                      ? "bg-teal-600 text-white"
+                      : submissionResult.totalScore >= 60
+                      ? "bg-amber-500 text-white"
+                      : "bg-red-500 text-white"
+                  )}>
+                    {submissionResult.totalScore >= 85
+                      ? '🌟 Sangat Memuaskan'
+                      : submissionResult.totalScore >= 75
+                      ? '✅ Tuntas / Memuaskan'
+                      : submissionResult.totalScore >= 60
+                      ? '⚠️ Cukup'
+                      : '📚 Perlu Ditingkatkan'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Breakdown Details */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+                <div className="p-3.5 bg-gray-50 rounded-xl border border-gray-200">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-gray-700">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    Pilihan Ganda
+                  </div>
+                  <div className="mt-1 text-sm font-bold text-gray-900">
+                    {submissionResult.mcqCorrect} / {submissionResult.mcqTotal} Benar
+                  </div>
+                  <div className="text-[11px] text-gray-500 mt-0.5">
+                    Skor PG: {submissionResult.mcqScore} poin
+                  </div>
+                </div>
+
+                <div className="p-3.5 bg-gray-50 rounded-xl border border-gray-200">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-gray-700">
+                    <Award className="w-4 h-4 text-indigo-600" />
+                    Essay / Uraian
+                  </div>
+                  <div className="mt-1 text-sm font-bold text-gray-900">
+                    {submissionResult.essayCount > 0 ? (
+                      `${submissionResult.essayEarned.toFixed(1)} / ${submissionResult.essayTotalPossible} Poin`
+                    ) : (
+                      'Tidak ada essay'
+                    )}
+                  </div>
+                  <div className="text-[11px] text-gray-500 mt-0.5">
+                    {submissionResult.essayCount > 0 ? 'Dinilai otomatis sesuai kunci' : 'Hanya pilihan ganda'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Action */}
+              <button
+                type="button"
+                onClick={() => {
+                  setSubmissionResult(null);
+                  navigate('/dashboard');
+                }}
+                className="w-full py-3.5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>Kembali ke Dashboard</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

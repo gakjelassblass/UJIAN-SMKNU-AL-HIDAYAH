@@ -129,3 +129,104 @@ TIPS:
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Generates and downloads an Excel template specifically for Answer Keys (PG & Essay)
+ */
+export function downloadAnswerKeyTemplateExcel() {
+  const data = [
+    {
+      No: 1,
+      Tipe: 'PG',
+      Kunci_Jawaban: 'C',
+      Skor_Maksimal: 1,
+      Keterangan: 'Pilihan Ganda Soal No 1'
+    },
+    {
+      No: 2,
+      Tipe: 'PG',
+      Kunci_Jawaban: 'A',
+      Skor_Maksimal: 1,
+      Keterangan: 'Pilihan Ganda Soal No 2'
+    },
+    {
+      No: 3,
+      Tipe: 'PG',
+      Kunci_Jawaban: 'B',
+      Skor_Maksimal: 1,
+      Keterangan: 'Pilihan Ganda Soal No 3'
+    },
+    {
+      No: 4,
+      Tipe: 'Essay',
+      Kunci_Jawaban: 'Menghubungkan setiap node ke switch sentral. Jika satu kabel putus, node lain tetap bekerja normal.',
+      Skor_Maksimal: 10,
+      Keterangan: 'Kunci Essay / Kata Kunci Penilaian'
+    },
+    {
+      No: 5,
+      Tipe: 'Essay',
+      Kunci_Jawaban: 'Confidentiality (Kerahasiaan), Integrity (Integritas), Availability (Ketersediaan data).',
+      Skor_Maksimal: 10,
+      Keterangan: 'Kunci Essay / Kata Kunci Penilaian'
+    }
+  ];
+
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Kunci_Jawaban');
+
+  ws['!cols'] = [
+    { wch: 8 },  // No
+    { wch: 10 }, // Tipe
+    { wch: 45 }, // Kunci_Jawaban
+    { wch: 15 }, // Skor_Maksimal
+    { wch: 30 }  // Keterangan
+  ];
+
+  XLSX.writeFile(wb, 'template_kunci_jawaban_ujian.xlsx');
+}
+
+/**
+ * Downloads sample text format for Answer Keys (PG & Essay)
+ */
+export function downloadAnswerKeyFormatSampleText() {
+  const content = `FORMAT KUNCI JAWABAN UJIAN (PILIHAN GANDA & ESSAY)
+SMK AL-HIDAYAH / CBT ONLINE
+==================================================
+
+PETUNJUK PENULISAN KUNCI JAWABAN:
+1. Pilihan Ganda: Tuliskan nomor soal diikuti opsi (A/B/C/D/E).
+   Contoh:
+   1. A
+   2. C
+   3. B
+   4. D
+   5. E
+
+2. Essay / Uraian: Tuliskan nomor soal diikuti kunci jawaban/kata kunci rubrik dan skor maksimal (opsional).
+   Contoh:
+   6. Essay: Hardware adalah perangkat keras fisik, sedangkan software adalah instruksi program digital. (Skor: 10)
+   7. Uraian: Rukun Iman ada 6 yaitu iman kepada Allah, Malaikat, Kitab, Rasul, Hari Akhir, Qada dan Qadar. (Skor: 10)
+
+Atau format ringkas:
+1. A
+2. B
+3. C
+4. D
+5. E
+6. Jawaban essay nomor 6 di sini...
+7. Jawaban essay nomor 7 di sini...
+`;
+
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'contoh_format_kunci_jawaban.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+

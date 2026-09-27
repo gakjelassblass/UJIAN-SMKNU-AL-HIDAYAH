@@ -19,6 +19,7 @@ export interface Class {
 export interface Subject {
   id: string;
   name: string;
+  shuffleQuestions?: boolean;
 }
 
 export interface AppSettings {
@@ -53,6 +54,7 @@ export interface ExamSchedule {
   korektorId: string; // ID of the teacher who grades (Korektor)
   isStrictTime: boolean;
   isActive: boolean;
+  shuffleQuestions?: boolean;
   createdAt: number;
 }
 
@@ -85,6 +87,7 @@ export interface Exam {
   isActive: boolean;
   isSimulation?: boolean;
   durationMinutes?: number;
+  shuffleQuestions?: boolean; // Acak urutan soal untuk setiap siswa
   createdAt: number;
 }
 
@@ -106,4 +109,5 @@ export interface Attempt {
   korektorId?: string; // ID of the teacher who grades (Korektor)
   latestCameraSnapshot?: string; // Base64 image
   lastActiveAt?: number;
+  questionOrder?: string[]; // Array of question IDs in shuffled order
 }

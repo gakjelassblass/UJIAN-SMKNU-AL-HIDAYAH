@@ -347,7 +347,9 @@ export default function ExamSchedulePage() {
                     >
                       <option value="">-- Pilih Soal --</option>
                       {exams.map(exam => (
-                        <option key={exam.id} value={exam.id}>{exam.title} ({exam.mapel})</option>
+                        <option key={exam.id} value={exam.id}>
+                          {exam.title} ({exam.mapel}) {exam.shuffleQuestions ? '🔀 [Soal Diacak]' : ''}
+                        </option>
                       ))}
                     </select>
                   </div>

@@ -404,3 +404,255 @@ export async function parseDocumentFile(file: File, defaultEssayMaxScore = 4): P
 
   return parseTextToQuestions(text, defaultEssayMaxScore);
 }
+
+export interface AnswerKeyItem {
+  number: number;
+  type: 'multiple_choice' | 'essay';
+  key: string;
+  maxScore?: number;
+}
+
+/**
+ * Parses raw text into a structured list of AnswerKeyItem objects.
+ * Handles patterns:
+ * - "1. A", "2. B", "3. C"
+ * - "1: A 2: B 3: C"
+ * - "4. Essay: Kunci uraian ... [Skor: 10]"
+ * - "5. Uraian: Jawaban..."
+ */
+export function parseAnswerKeyFromText(rawText: string): AnswerKeyItem[] {
+  if (!rawText || !rawText.trim()) return [];
+
+  const items: AnswerKeyItem[] = [];
+  const lines = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+
+  // Regex for line starting with number: "1. A", "1) A", "1. Essay: ...", "No. 1 = C"
+  const numberedLineRegex = /^(?:No\.?\s*)?(\d+)[\.\)\:\=\-]\s*(.*)$/i;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    // Skip section headers like "KUNCI JAWABAN"
+    if (/^(?:KUNCI\s+JAWABAN|KUNCI|ANSWER\s+KEY)/i.test(line) && !numberedLineRegex.test(line)) {
+      continue;
+    }
+
+    const match = line.match(numberedLineRegex);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      let content = match[2].trim();
+
+      // Check for score/bobot tag e.g. [Skor: 10] or (Skor: 10)
+      let maxScore: number | undefined = undefined;
+      const scoreMatch = content.match(/[\(\[]?(?:Skor|Bobot|Score|Max)\s*[:=\-]?\s*(\d+)[\)\]]?/i);
+      if (scoreMatch) {
+        maxScore = parseInt(scoreMatch[1], 10);
+        content = content.replace(scoreMatch[0], '').trim();
+      }
+
+      // Check if explicitly marked as essay
+      const isEssayExplicit = /^(?:Essay|Uraian|Isian)[\s\:\.\-]/i.test(content);
+      if (isEssayExplicit) {
+        content = content.replace(/^(?:Essay|Uraian|Isian)[\s\:\.\-]+/i, '').trim();
+        items.push({
+          number: num,
+          type: 'essay',
+          key: content,
+          maxScore: maxScore || 10,
+        });
+        continue;
+      }
+
+      // Check single letter choice (A, B, C, D, E)
+      const mcMatch = content.match(/^([A-Ea-e])\b(?:\s*[\.\:\-\)]\s*(.*))?$/);
+      if (mcMatch && (!mcMatch[2] || mcMatch[2].length < 30)) {
+        items.push({
+          number: num,
+          type: 'multiple_choice',
+          key: mcMatch[1].toUpperCase(),
+          maxScore: maxScore || 1,
+        });
+      } else {
+        // Multi-character content -> treat as Essay key or full answer
+        items.push({
+          number: num,
+          type: 'essay',
+          key: content,
+          maxScore: maxScore || 10,
+        });
+      }
+    } else {
+      // Check multiple short answers on single line: "1. A 2. B 3. C 4. D"
+      const multiRegex = /(\d+)[\.\)\:\=\s]+([A-Ea-e])\b/g;
+      let mm;
+      let foundAny = false;
+      while ((mm = multiRegex.exec(line)) !== null) {
+        foundAny = true;
+        const num = parseInt(mm[1], 10);
+        const ans = mm[2].toUpperCase();
+        items.push({
+          number: num,
+          type: 'multiple_choice',
+          key: ans,
+          maxScore: 1,
+        });
+      }
+      if (!foundAny && items.length > 0) {
+        // Append text to previous essay key
+        const last = items[items.length - 1];
+        if (last.type === 'essay') {
+          last.key += ' ' + line;
+        }
+      }
+    }
+  }
+
+  // Sort by question number
+  return items.sort((a, b) => a.number - b.number);
+}
+
+/**
+ * Parses Answer Keys from an Excel file
+ */
+export async function parseAnswerKeyFromExcel(file: File): Promise<AnswerKeyItem[]> {
+  const arrayBuffer = await file.arrayBuffer();
+  const wb = XLSX.read(arrayBuffer, { type: 'array' });
+  const wsname = wb.SheetNames[0];
+  const ws = wb.Sheets[wsname];
+  const data = XLSX.utils.sheet_to_json(ws);
+
+  return data.map((row: any, index) => {
+    const rawNo = row.No || row.no || row.Nomor || row.nomor || (index + 1);
+    const num = parseInt(rawNo.toString(), 10) || (index + 1);
+    const rawType = (row.Tipe || row.tipe || row.Type || row.type || '').toString().toLowerCase();
+    const rawKey = (row.Kunci_Jawaban || row.Kunci || row.kunci || row.Jawaban || row.jawaban || row.Jawab || row.jawab || row.Key || row.key || '').toString().trim();
+    const rawMaxScore = row.Skor_Maksimal || row.skor_maksimal || row.Skor || row.skor || row.MaxScore || row.max_score;
+
+    const isExplicitEssay = rawType.includes('essay') || rawType.includes('uraian');
+    const isSingleLetter = /^[A-Ea-e]$/.test(rawKey);
+    const type: 'multiple_choice' | 'essay' = isExplicitEssay || (!isSingleLetter && rawKey.length > 1) ? 'essay' : 'multiple_choice';
+
+    return {
+      number: num,
+      type,
+      key: type === 'multiple_choice' ? rawKey.toUpperCase().charAt(0) : rawKey,
+      maxScore: rawMaxScore ? Number(rawMaxScore) : (type === 'essay' ? 10 : 1),
+    };
+  }).sort((a, b) => a.number - b.number);
+}
+
+/**
+ * Universal Answer Key parser for files (.xlsx, .docx, .pdf, .txt)
+ */
+export async function parseAnswerKeyFile(file: File): Promise<AnswerKeyItem[]> {
+  const fileName = file.name.toLowerCase();
+
+  if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+    return parseAnswerKeyFromExcel(file);
+  }
+
+  let text = '';
+  if (fileName.endsWith('.pdf')) {
+    text = await extractTextFromPDF(file);
+  } else if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) {
+    text = await extractTextFromWord(file);
+  } else if (fileName.endsWith('.txt')) {
+    text = await file.text();
+  } else {
+    throw new Error('Format file kunci tidak didukung. Harap gunakan file Excel (.xlsx), Word (.docx), PDF (.pdf), atau Teks (.txt).');
+  }
+
+  if (!text || !text.trim()) {
+    throw new Error('File tidak berisi teks kunci jawaban.');
+  }
+
+  return parseAnswerKeyFromText(text);
+}
+
+/**
+ * Smart automatic essay grading helper based on keyword overlap, length, and reference answer similarity.
+ * Returns earned score out of maxScore (rounded to 1 decimal place).
+ */
+export function gradeEssayAnswer(studentAnswer: string, referenceAnswer: string, maxScore: number = 10): number {
+  if (!studentAnswer || !studentAnswer.trim()) return 0;
+  if (!referenceAnswer || !referenceAnswer.trim()) return Math.round((maxScore * 0.5) * 10) / 10; // Default half if answered and no rubric
+
+  const clean = (str: string) =>
+    str
+      .toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const studentClean = clean(studentAnswer);
+  const refClean = clean(referenceAnswer);
+
+  if (studentClean === refClean) {
+    return maxScore;
+  }
+
+  // Indonesian / common stopwords to ignore
+  const stopwords = new Set([
+    'dan', 'atau', 'yang', 'di', 'ke', 'dari', 'untuk', 'pada', 'adalah', 'yaitu',
+    'ialah', 'merupakan', 'dengan', 'secara', 'ini', 'itu', 'karena', 'oleh', 'agar',
+    'supaya', 'akan', 'telah', 'sudah', 'bisa', 'dapat', 'harus', 'sebagai', 'dalam',
+    'the', 'is', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'as', 'by'
+  ]);
+
+  const extractKeywords = (text: string) => {
+    return Array.from(new Set(
+      text
+        .split(' ')
+        .filter(w => w.length >= 3 && !stopwords.has(w))
+    ));
+  };
+
+  const refKeywords = extractKeywords(refClean);
+  const studentKeywords = new Set(extractKeywords(studentClean));
+
+  if (refKeywords.length === 0) {
+    // If no distinct keywords, evaluate based on token similarity
+    const sTokens = studentClean.split(' ');
+    const rTokens = refClean.split(' ');
+    const matches = sTokens.filter(t => rTokens.includes(t)).length;
+    const ratio = matches / Math.max(rTokens.length, 1);
+    return Math.round(Math.min(maxScore, maxScore * Math.max(0.3, ratio)) * 10) / 10;
+  }
+
+  // Count how many reference keywords exist in student text
+  let matchCount = 0;
+  for (const kw of refKeywords) {
+    if (studentKeywords.has(kw) || studentClean.includes(kw)) {
+      matchCount++;
+    } else {
+      // Partial prefix / stem match (e.g., "pemrosesan" ~ "proses")
+      const kwStem = kw.slice(0, Math.min(kw.length, 5));
+      if (kwStem.length >= 4 && studentClean.includes(kwStem)) {
+        matchCount += 0.8;
+      }
+    }
+  }
+
+  const keywordRatio = Math.min(1, matchCount / refKeywords.length);
+
+  // Consider word count completeness (encourage detailed answers)
+  const lengthRatio = Math.min(1, studentClean.split(' ').length / Math.max(3, refKeywords.length * 1.5));
+  const compositeRatio = (keywordRatio * 0.85) + (lengthRatio * 0.15);
+
+  let rawScore = 0;
+  if (compositeRatio >= 0.75) {
+    rawScore = maxScore;
+  } else if (compositeRatio >= 0.5) {
+    rawScore = maxScore * 0.8;
+  } else if (compositeRatio >= 0.3) {
+    rawScore = maxScore * 0.55;
+  } else if (compositeRatio >= 0.15) {
+    rawScore = maxScore * 0.35;
+  } else {
+    rawScore = maxScore * 0.15;
+  }
+
+  return Math.round(Math.min(maxScore, Math.max(0, rawScore)) * 10) / 10;
+}
+

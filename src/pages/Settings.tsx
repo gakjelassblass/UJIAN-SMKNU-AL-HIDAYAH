@@ -148,20 +148,33 @@ export default function Settings() {
     e.preventDefault();
     if (!currentSubject.name) return;
     if (currentSubject.id) {
-      const oldSubjectName = subjects.find(s => s.id === currentSubject.id)?.name;
-      await db.subjects.update(currentSubject as Subject);
+      const oldSubject = subjects.find(s => s.id === currentSubject.id);
+      const oldSubjectName = oldSubject?.name;
+      const updatedSubject: Subject = {
+        id: currentSubject.id,
+        name: currentSubject.name,
+        shuffleQuestions: currentSubject.shuffleQuestions ?? false,
+      };
+      await db.subjects.update(updatedSubject);
       toast.success('Mata pelajaran berhasil diperbarui');
       
       // Propagate change to exams
-      if (oldSubjectName && oldSubjectName !== currentSubject.name) {
-        const allExams = await db.exams.getAll();
-        const examsToUpdate = allExams.filter(e => e.mapel === oldSubjectName);
-        for (const exam of examsToUpdate) {
-          await db.exams.update({ ...exam, mapel: currentSubject.name, title: currentSubject.name });
-        }
+      const allExams = await db.exams.getAll();
+      const examsToUpdate = allExams.filter(e => e.mapel === oldSubjectName || e.mapel === currentSubject.name);
+      for (const exam of examsToUpdate) {
+        await db.exams.update({ 
+          ...exam, 
+          mapel: currentSubject.name, 
+          title: currentSubject.name,
+          shuffleQuestions: updatedSubject.shuffleQuestions
+        });
       }
     } else {
-      await db.subjects.add({ id: `subject-${Date.now()}`, name: currentSubject.name });
+      await db.subjects.add({ 
+        id: `subject-${Date.now()}`, 
+        name: currentSubject.name,
+        shuffleQuestions: currentSubject.shuffleQuestions ?? false
+      });
       toast.success('Mata pelajaran berhasil ditambahkan');
     }
     setIsEditingSubject(false);
@@ -486,7 +499,28 @@ export default function Settings() {
                     placeholder="Contoh: Matematika"
                   />
                 </div>
-                <div className="flex justify-end gap-3">
+
+                <div className="flex items-start gap-3 bg-emerald-50/60 p-3.5 rounded-lg border border-emerald-200">
+                  <div className="flex items-center h-5 mt-0.5">
+                    <input
+                      type="checkbox"
+                      id="subject-shuffle"
+                      checked={currentSubject.shuffleQuestions ?? false}
+                      onChange={(e) => setCurrentSubject({ ...currentSubject, shuffleQuestions: e.target.checked })}
+                      className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded cursor-pointer"
+                    />
+                  </div>
+                  <div className="text-sm">
+                    <label htmlFor="subject-shuffle" className="font-bold text-gray-800 cursor-pointer flex items-center gap-1.5">
+                      <span>🔀</span> Acak Urutan Soal Ujian
+                    </label>
+                    <p className="text-gray-600 text-xs mt-0.5 leading-relaxed">
+                      Jika dicentang, urutan nomor soal pada mata pelajaran ini akan diacak untuk setiap siswa (misal: soal No 1 di siswa A menjadi No 10 di siswa B).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2">
                   <button type="button" onClick={() => setIsEditingSubject(false)} className="px-4 py-2 text-sm font-bold text-gray-600 hover:text-gray-800">BATAL</button>
                   <button type="submit" className="px-6 py-2 bg-emerald-600 text-white text-sm font-bold rounded-md hover:bg-emerald-700 shadow-md">SIMPAN</button>
                 </div>
@@ -497,10 +531,20 @@ export default function Settings() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {subjects.map((subject) => (
               <div key={subject.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex items-center justify-between hover:shadow-md transition-shadow">
-                <span className="font-bold text-emerald-700">{subject.name}</span>
+                <div className="flex flex-col">
+                  <span className="font-bold text-emerald-800">{subject.name}</span>
+                  <span className={cn(
+                    "inline-flex items-center gap-1 text-[11px] font-semibold mt-1 px-2 py-0.5 rounded-full w-fit",
+                    subject.shuffleQuestions 
+                      ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
+                      : "bg-gray-100 text-gray-600"
+                  )}>
+                    {subject.shuffleQuestions ? '🔀 Soal Diacak' : '🔢 Urutan Asli'}
+                  </span>
+                </div>
                 <div className="flex gap-2">
-                  <button onClick={() => { setCurrentSubject(subject); setIsEditingSubject(true); }} className="p-1.5 bg-yellow-500 text-white rounded-md hover:bg-yellow-600"><Edit className="h-4 w-4" /></button>
-                  <button onClick={() => { setDeleteInfo({ id: subject.id, type: 'subject' }); setIsDeleting(true); }} className="p-1.5 bg-red-600 text-white rounded-md hover:bg-red-700"><Trash2 className="h-4 w-4" /></button>
+                  <button onClick={() => { setCurrentSubject(subject); setIsEditingSubject(true); }} className="p-1.5 bg-yellow-500 text-white rounded-md hover:bg-yellow-600" title="Edit Mapel"><Edit className="h-4 w-4" /></button>
+                  <button onClick={() => { setDeleteInfo({ id: subject.id, type: 'subject' }); setIsDeleting(true); }} className="p-1.5 bg-red-600 text-white rounded-md hover:bg-red-700" title="Hapus Mapel"><Trash2 className="h-4 w-4" /></button>
                 </div>
               </div>
             ))}

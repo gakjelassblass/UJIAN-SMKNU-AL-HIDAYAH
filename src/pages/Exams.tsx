@@ -19,12 +19,14 @@ import {
   ClipboardPaste,
   RefreshCw,
   Eye,
-  CheckCircle2
+  CheckCircle2,
+  Key
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import ConfirmModal from '../components/ConfirmModal';
 import QuestionFormatModal from '../components/QuestionFormatModal';
+import AnswerKeyModal from '../components/AnswerKeyModal';
 import { parseDocumentFile, parseTextToQuestions } from '../lib/documentParser';
 
 export default function Exams() {
@@ -59,6 +61,8 @@ export default function Exams() {
   const [uploadedFileName, setUploadedFileName] = useState<string>('');
   const [pasteText, setPasteText] = useState<string>('');
   const [isFormatModalOpen, setIsFormatModalOpen] = useState(false);
+  const [isAnswerKeyModalOpen, setIsAnswerKeyModalOpen] = useState(false);
+  const [targetExamForKeys, setTargetExamForKeys] = useState<Exam | null>(null);
   const [expandedQuestionIdx, setExpandedQuestionIdx] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -67,8 +71,25 @@ export default function Exams() {
     durationMinutes: 60,
     mcqScore: 2,
     essayMaxScore: 4,
+    shuffleQuestions: false,
   });
   const [parsedQuestions, setParsedQuestions] = useState<Question[]>([]);
+
+  const handleApplyAnswerKeys = async (updatedQuestions: Question[]) => {
+    if (targetExamForKeys) {
+      try {
+        const updatedExam = { ...targetExamForKeys, questions: updatedQuestions };
+        await db.exams.update(updatedExam);
+        setExams(prev => prev.map(e => e.id === targetExamForKeys.id ? updatedExam : e));
+        toast.success(`Kunci jawaban untuk ${targetExamForKeys.title} berhasil diperbarui di database!`);
+      } catch (err) {
+        console.error(err);
+        toast.error('Gagal menyimpan perubahan kunci jawaban ke database.');
+      }
+    } else {
+      setParsedQuestions(updatedQuestions);
+    }
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -107,6 +128,15 @@ export default function Exams() {
   if (user?.role !== 'admin' && user?.role !== 'teacher') {
     return <div>Akses Ditolak</div>;
   }
+
+  const handleMapelChange = (val: string) => {
+    const matchedSubject = subjects.find(s => s.name.toLowerCase() === val.toLowerCase());
+    setFormData(prev => ({
+      ...prev,
+      mapel: val,
+      shuffleQuestions: matchedSubject?.shuffleQuestions !== undefined ? matchedSubject.shuffleQuestions : prev.shuffleQuestions
+    }));
+  };
 
   // Handle File Upload (PDF, Word DOCX, Excel XLSX/XLS)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -257,6 +287,7 @@ export default function Exams() {
         questions: parsedQuestions.map(q => q.type === 'essay' ? { ...q, maxScore: q.maxScore || formData.essayMaxScore } : q),
         durationMinutes: formData.durationMinutes,
         mcqScore: formData.mcqScore,
+        shuffleQuestions: formData.shuffleQuestions,
         korektorId: activeTab === 'simulation' ? (teachers.find(t => t.role === 'admin')?.id || user.id) : '',
         isSimulation: activeTab === 'simulation'
       };
@@ -267,7 +298,8 @@ export default function Exams() {
         if (!subjects.find(s => s.name === formData.mapel)) {
           await db.subjects.add({
             id: `subject-${Date.now()}`,
-            name: formData.mapel
+            name: formData.mapel,
+            shuffleQuestions: formData.shuffleQuestions
           });
         }
       }
@@ -275,7 +307,8 @@ export default function Exams() {
       if (!subjects.find(s => s.name === formData.mapel)) {
         await db.subjects.add({
           id: `subject-${Date.now()}`,
-          name: formData.mapel
+          name: formData.mapel,
+          shuffleQuestions: formData.shuffleQuestions
         });
       }
 
@@ -289,6 +322,7 @@ export default function Exams() {
         questions: parsedQuestions.map(q => q.type === 'essay' ? { ...q, maxScore: q.maxScore || formData.essayMaxScore } : q),
         isActive: false,
         durationMinutes: formData.durationMinutes,
+        shuffleQuestions: formData.shuffleQuestions,
         isSimulation: activeTab === 'simulation',
         createdAt: Date.now()
       };
@@ -304,7 +338,7 @@ export default function Exams() {
   const resetForm = () => {
     setIsAdding(false);
     setEditingId(null);
-    setFormData({ mapel: '', durationMinutes: 60, mcqScore: 2, essayMaxScore: 4 });
+    setFormData({ mapel: '', durationMinutes: 60, mcqScore: 2, essayMaxScore: 4, shuffleQuestions: false });
     setParsedQuestions([]);
     setUploadedFileName('');
     setPasteText('');
@@ -318,6 +352,7 @@ export default function Exams() {
       durationMinutes: exam.durationMinutes || 60,
       mcqScore: exam.mcqScore || 2,
       essayMaxScore: exam.questions.find(q => q.type === 'essay')?.maxScore || 4,
+      shuffleQuestions: exam.shuffleQuestions ?? false,
     });
     setParsedQuestions(exam.questions);
     setEditingId(exam.id);
@@ -497,7 +532,7 @@ export default function Exams() {
                     list="mapel-list"
                     required
                     value={formData.mapel}
-                    onChange={e => setFormData({ ...formData, mapel: e.target.value })}
+                    onChange={e => handleMapelChange(e.target.value)}
                     className="shadow-sm focus:ring-emerald-500 focus:border-emerald-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2 border"
                     placeholder="Contoh: Matematika, Bahasa Indonesia, Produktif TKJ..."
                   />
@@ -563,6 +598,29 @@ export default function Exams() {
                     />
                     <p className="mt-1 text-[11px] text-gray-500">
                       * Batas nilai maksimal saat guru mengoreksi essay.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Opsi Acak Soal Siswa */}
+              <div className="sm:col-span-6 bg-emerald-50/70 p-4 rounded-lg border border-emerald-200">
+                <div className="flex items-start gap-3">
+                  <div className="flex items-center h-5 mt-0.5">
+                    <input
+                      type="checkbox"
+                      id="exam-shuffle"
+                      checked={formData.shuffleQuestions}
+                      onChange={e => setFormData({ ...formData, shuffleQuestions: e.target.checked })}
+                      className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded cursor-pointer"
+                    />
+                  </div>
+                  <div className="text-sm">
+                    <label htmlFor="exam-shuffle" className="font-bold text-gray-800 cursor-pointer flex items-center gap-1.5">
+                      <span>🔀</span> Acak Urutan Soal Ujian (Nomor Soal Berbeda untuk Setiap Siswa)
+                    </label>
+                    <p className="text-gray-600 text-xs mt-0.5 leading-relaxed">
+                      Jika dicentang, nomor soal akan diacak sehingga urutan soal setiap siswa tidak akan sama (misal: soal nomor 1 di siswa A bisa menjadi nomor 10 di siswa B).
                     </p>
                   </div>
                 </div>
@@ -667,6 +725,17 @@ export default function Exams() {
                         <HelpCircle className="h-3.5 w-3.5 mr-1.5 text-gray-500" />
                         Lihat Contoh Format Dokumen
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTargetExamForKeys(null);
+                          setIsAnswerKeyModalOpen(true);
+                        }}
+                        className="inline-flex items-center px-3 py-2 text-xs font-bold text-emerald-800 bg-emerald-100/90 border border-emerald-300 rounded-lg hover:bg-emerald-200 transition-colors shadow-sm"
+                      >
+                        <Key className="h-3.5 w-3.5 mr-1.5 text-emerald-700" />
+                        Upload Kunci Jawaban (PG & Essay)
+                      </button>
                     </div>
 
                     {isParsing && (
@@ -711,15 +780,28 @@ Skor: 10`}
                       className="w-full font-mono text-xs p-3 border border-gray-300 rounded-lg focus:ring-emerald-500 focus:border-emerald-500 bg-gray-50"
                     />
 
-                    <div className="flex items-center justify-between">
-                      <button
-                        type="button"
-                        onClick={() => setIsFormatModalOpen(true)}
-                        className="text-xs text-emerald-600 hover:text-emerald-700 font-medium inline-flex items-center gap-1"
-                      >
-                        <HelpCircle className="h-3.5 w-3.5" />
-                        Format yang Didukung
-                      </button>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsFormatModalOpen(true)}
+                          className="text-xs text-emerald-600 hover:text-emerald-700 font-medium inline-flex items-center gap-1"
+                        >
+                          <HelpCircle className="h-3.5 w-3.5" />
+                          Format yang Didukung
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetExamForKeys(null);
+                            setIsAnswerKeyModalOpen(true);
+                          }}
+                          className="text-xs text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 font-bold px-2.5 py-1 rounded-md inline-flex items-center gap-1 shadow-xs"
+                        >
+                          <Key className="h-3 w-3 text-emerald-700" />
+                          Upload Kunci Jawaban
+                        </button>
+                      </div>
 
                       <button
                         type="button"
@@ -753,7 +835,18 @@ Skor: 10`}
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetExamForKeys(null);
+                            setIsAnswerKeyModalOpen(true);
+                          }}
+                          className="inline-flex items-center px-3 py-1.5 text-xs font-bold text-emerald-900 bg-emerald-200/90 border border-emerald-400 rounded-lg hover:bg-emerald-300 shadow-sm transition-colors"
+                        >
+                          <Key className="h-3.5 w-3.5 mr-1 text-emerald-800" />
+                          Upload Kunci Jawaban
+                        </button>
                         <button
                           type="button"
                           onClick={handleAddBlankQuestion}
@@ -1141,9 +1234,9 @@ Skor: 10`}
                     </div>
                   </div>
                   <div className="mt-2 sm:flex sm:justify-between">
-                    <div className="sm:flex flex-wrap gap-x-6 gap-y-1">
+                    <div className="sm:flex flex-wrap items-center gap-x-6 gap-y-1">
                       <p className="flex items-center text-xs text-gray-500">
-                        Mapel: {exam.mapel || '-'}
+                        Mapel: <span className="font-semibold text-gray-700 ml-1">{exam.mapel || '-'}</span>
                       </p>
                       <p className="flex items-center text-xs text-gray-500">
                         {exam.questions.length} Soal ({exam.questions.filter(q => q.type === 'multiple_choice').length} PG, {exam.questions.filter(q => q.type === 'essay').length} Essay)
@@ -1151,8 +1244,27 @@ Skor: 10`}
                       <p className="flex items-center text-xs text-gray-500">
                         Durasi: {exam.durationMinutes || 60} Menit
                       </p>
+                      <span className={cn(
+                        "inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full",
+                        exam.shuffleQuestions 
+                          ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
+                          : "bg-gray-100 text-gray-600"
+                      )}>
+                        {exam.shuffleQuestions ? '🔀 Soal Diacak' : '🔢 Urutan Asli'}
+                      </span>
                     </div>
                     <div className="mt-2 flex items-center text-sm text-gray-500 sm:mt-0 gap-2">
+                      <button
+                        onClick={() => {
+                          setTargetExamForKeys(exam);
+                          setIsAnswerKeyModalOpen(true);
+                        }}
+                        className="p-1.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-1 text-xs font-semibold px-2.5"
+                        title="Upload / Pasang Kunci Jawaban"
+                      >
+                        <Key className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Kunci</span>
+                      </button>
                       {user.role === 'admin' || user.role === 'teacher' ? (
                         <button 
                           onClick={() => handleEdit(exam)} 
@@ -1231,6 +1343,17 @@ Skor: 10`}
           )}
         </ul>
       </div>
+
+      {/* Answer Key Upload & Matching Modal */}
+      <AnswerKeyModal
+        isOpen={isAnswerKeyModalOpen}
+        onClose={() => {
+          setIsAnswerKeyModalOpen(false);
+          setTargetExamForKeys(null);
+        }}
+        questions={targetExamForKeys ? targetExamForKeys.questions : parsedQuestions}
+        onApplyKeys={handleApplyAnswerKeys}
+      />
     </div>
   );
 }
