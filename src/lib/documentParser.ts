@@ -3,10 +3,12 @@ import * as pdfjsLib from 'pdfjs-dist';
 import * as XLSX from 'xlsx';
 import { Question } from '../types';
 
-// Configure pdfjs worker safely for Vite/Browser environments
+// Configure pdfjs worker safely for Vite/Vercel/Browser environments
 try {
-  // Use local or unpkg worker URL
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  if (typeof window !== 'undefined') {
+    const version = pdfjsLib.version || '4.0.379';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+  }
 } catch (e) {
   console.warn('Failed to set pdfjs workerSrc:', e);
 }
