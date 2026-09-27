@@ -1,0 +1,5 @@
+{
+  "name": "Penilaian SMK AL-HIdayah",
+  "description": "Aplikasi Ujian Online SMK AL-Hidayah dengan fitur proctoring kamera.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"]
+}

@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Allow read/write for all authenticated users for now
+    // In a real app, you should restrict this based on roles
+    match /{document=**} {
+      allow read, write: if true; // TEMPORARY: Allow all for testing
+    }
+  }
+}

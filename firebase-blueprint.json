@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile for admin, teacher, or student",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "teacher", "guru", "student"] },
+        "name": { "type": "string" },
+        "kelas": { "type": "string" },
+        "logoUrl": { "type": "string" }
+      },
+      "required": ["id", "username", "role", "name"]
+    },
+    "ExamSchedule": {
+      "title": "ExamSchedule",
+      "description": "Schedule for an exam in a specific class and time slot",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "examId": { "type": "string" },
+        "date": { "type": "string" },
+        "timeSlotId": { "type": "string" },
+        "kelas": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "proctorId": { "type": "string" },
+        "korektorId": { "type": "string" },
+        "isStrictTime": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "examId", "date", "timeSlotId", "kelas", "durationMinutes", "proctorId", "korektorId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of users"
+    },
+    "/schedules/{scheduleId}": {
+      "schema": "ExamSchedule",
+      "description": "Collection of exam schedules"
+    },
+    "/exams/{examId}": {
+      "schema": "Exam",
+      "description": "Collection of exam templates"
+    },
+    "/settings/app-settings": {
+      "schema": "AppSettings",
+      "description": "Global app settings"
+    }
+  }
+}
