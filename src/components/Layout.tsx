@@ -40,7 +40,7 @@ export default function Layout() {
     { name: 'Jadwal Ujian', href: '/schedule', icon: Calendar, roles: ['admin'] },
     { name: 'Koreksi', href: '/grading', icon: CheckCircle, roles: ['teacher'] },
     { name: 'Setting', href: '/settings', icon: Settings, roles: ['admin'] },
-    { name: 'Profil', href: '/profile', icon: UserIcon, roles: ['teacher', 'student'] },
+    { name: 'Profil', href: '/profile', icon: UserIcon, roles: ['admin', 'teacher', 'student'] },
   ];
 
   const filteredNav = navigation.filter(item => item.roles.includes(user.role));

@@ -8,6 +8,7 @@ export interface User {
   name: string;
   kelas?: string;
   logoUrl?: string;
+  fullscreenLockExam?: boolean; // true = Fullscreen Terkunci Otomatis, false = Layar Normal
 }
 
 export interface Class {

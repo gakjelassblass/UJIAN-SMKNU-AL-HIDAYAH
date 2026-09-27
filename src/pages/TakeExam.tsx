@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth';
 import { db } from '../lib/db';
 import { Exam, Attempt, Answer, ExamSchedule, TimeSlot, AppSettings, Question } from '../types';
 import { toast } from 'sonner';
-import { Clock, AlertCircle, Camera, XCircle, Trophy, Award, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Clock, AlertCircle, Camera, XCircle, Trophy, Award, CheckCircle2, ArrowRight, Maximize, Lock, ShieldAlert, Monitor } from 'lucide-react';
 import { cn, shuffleArrayWithSeed } from '../lib/utils';
 import { gradeEssayAnswer } from '../lib/documentParser';
 import ConfirmModal from '../components/ConfirmModal';
@@ -13,6 +13,9 @@ export default function TakeExam() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
+  
+  // Mode Layar: true = Layar Penuh Terkunci (default), false = Layar Normal (sesuai profil pengguna)
+  const isFullscreenLockEnabled = user?.fullscreenLockExam !== false;
   
   const [exam, setExam] = useState<Exam | null>(null);
   const [schedule, setSchedule] = useState<ExamSchedule | null>(null);
@@ -25,6 +28,7 @@ export default function TakeExam() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -41,6 +45,44 @@ export default function TakeExam() {
     examTitle: string;
   } | null>(null);
   const questionsPerPage = 10;
+
+  const requestFullScreen = async () => {
+    try {
+      const elem = document.documentElement as any;
+      if (elem.requestFullscreen) {
+        await elem.requestFullscreen();
+      } else if (elem.webkitRequestFullscreen) {
+        await elem.webkitRequestFullscreen();
+      } else if (elem.mozRequestFullScreen) {
+        await elem.mozRequestFullScreen();
+      } else if (elem.msRequestFullscreen) {
+        await elem.msRequestFullscreen();
+      }
+      setIsFullscreen(true);
+    } catch (err) {
+      console.warn('Fullscreen request failed:', err);
+    }
+  };
+
+  const exitFullScreen = async () => {
+    try {
+      const doc = document as any;
+      if (doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement) {
+        if (doc.exitFullscreen) {
+          await doc.exitFullscreen();
+        } else if (doc.webkitExitFullscreen) {
+          await doc.webkitExitFullscreen();
+        } else if (doc.mozCancelFullScreen) {
+          await doc.mozCancelFullScreen();
+        } else if (doc.msExitFullscreen) {
+          await doc.msExitFullscreen();
+        }
+      }
+      setIsFullscreen(false);
+    } catch (e) {
+      console.warn('Exit fullscreen failed:', e);
+    }
+  };
 
   const takeSnapshot = React.useCallback(() => {
     const video = videoRef.current;
@@ -301,6 +343,8 @@ export default function TakeExam() {
         (window as any).localStream = null;
       }
 
+      await exitFullScreen();
+
       toast.success('Ujian berhasil dikumpulkan & dinilai otomatis!');
 
       setSubmissionResult({
@@ -475,6 +519,105 @@ export default function TakeExam() {
     }
   }, [isCameraReady, attempt?.id, cameraActive, takeSnapshot, answers, appSettings]);
 
+  // Listen for fullscreen change events across all browsers
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const doc = document as any;
+      const isCurrentlyFullscreen = !!(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+      setIsFullscreen(isCurrentlyFullscreen);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, []);
+
+  // Prevent closing tab / navigating away while taking exam
+  useEffect(() => {
+    if (isCameraReady && !attempt?.endTime && !submissionResult) {
+      const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+        e.preventDefault();
+        e.returnValue = 'Ujian sedang berlangsung! Jawaban Anda mungkin hilang jika menutup halaman ini.';
+        return 'Ujian sedang berlangsung! Jawaban Anda mungkin hilang jika menutup halaman ini.';
+      };
+
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+      };
+    }
+  }, [isCameraReady, attempt?.endTime, submissionResult]);
+
+  // Prevent back button navigation during exam
+  useEffect(() => {
+    if (isCameraReady && !attempt?.endTime && !submissionResult) {
+      history.pushState(null, '', location.href);
+      const handlePopState = () => {
+        history.pushState(null, '', location.href);
+        toast.warning('⚠️ Navigasi dinonaktifkan selama ujian berlangsung!');
+      };
+
+      window.addEventListener('popstate', handlePopState);
+      return () => {
+        window.removeEventListener('popstate', handlePopState);
+      };
+    }
+  }, [isCameraReady, attempt?.endTime, submissionResult]);
+
+  // Anti-cheat tab switch warning
+  useEffect(() => {
+    if (isCameraReady && !attempt?.endTime && !submissionResult) {
+      const handleVisibilityChange = () => {
+        if (document.hidden) {
+          toast.error('⚠️ PERINGATAN: Dilarang berpindah tab atau meminimalkan layar ujian!');
+        }
+      };
+
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      };
+    }
+  }, [isCameraReady, attempt?.endTime, submissionResult]);
+
+  // Disable right-click context menu and developer tool shortcuts
+  useEffect(() => {
+    if (isCameraReady && !attempt?.endTime && !submissionResult) {
+      const handleContextMenu = (e: MouseEvent) => {
+        e.preventDefault();
+      };
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (
+          e.key === 'F12' ||
+          (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.key === 'C' || e.key === 'c' || e.key === 'J' || e.key === 'j')) ||
+          (e.ctrlKey && (e.key === 'u' || e.key === 'U'))
+        ) {
+          e.preventDefault();
+        }
+      };
+
+      window.addEventListener('contextmenu', handleContextMenu);
+      window.addEventListener('keydown', handleKeyDown);
+      return () => {
+        window.removeEventListener('contextmenu', handleContextMenu);
+        window.removeEventListener('keydown', handleKeyDown);
+      };
+    }
+  }, [isCameraReady, attempt?.endTime, submissionResult]);
+
   useEffect(() => {
     if (timeLeft === 0 && attempt && !attempt.endTime) {
       handleSubmit();
@@ -579,17 +722,54 @@ export default function TakeExam() {
 
               <div className="pt-4">
                 <button
-                  onClick={() => setIsCameraReady(true)}
+                  onClick={async () => {
+                    if (isFullscreenLockEnabled) {
+                      await requestFullScreen();
+                    }
+                    setIsCameraReady(true);
+                  }}
                   disabled={!cameraActive}
                   className={cn(
-                    "w-full py-3 px-6 rounded-xl font-bold text-white shadow-lg transition-all transform active:scale-95",
+                    "w-full py-3.5 px-6 rounded-xl font-bold text-white shadow-lg transition-all transform active:scale-95 flex items-center justify-center gap-2",
                     cameraActive 
-                      ? "bg-emerald-600 hover:bg-emerald-700 hover:shadow-emerald-200" 
+                      ? "bg-emerald-600 hover:bg-emerald-700 hover:shadow-emerald-200 cursor-pointer" 
                       : "bg-gray-300 cursor-not-allowed"
                   )}
                 >
-                  {cameraActive ? 'MULAI KERJAKAN SOAL' : 'MENUNGGU KAMERA...'}
+                  {isFullscreenLockEnabled ? (
+                    <>
+                      <Maximize className="w-5 h-5" />
+                      <span>{cameraActive ? 'MULAI KERJAKAN SOAL (LAYAR PENUH & TERKUNCI)' : 'MENUNGGU KAMERA...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Monitor className="w-5 h-5" />
+                      <span>{cameraActive ? 'MULAI KERJAKAN SOAL (LAYAR NORMAL)' : 'MENUNGGU KAMERA...'}</span>
+                    </>
+                  )}
                 </button>
+                
+                <div className="mt-2.5 flex items-center justify-center">
+                  <span className={cn(
+                    "inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1 rounded-full border",
+                    isFullscreenLockEnabled 
+                      ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                      : "bg-blue-50 text-blue-800 border-blue-300"
+                  )}>
+                    {isFullscreenLockEnabled ? (
+                      <>
+                        <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                        Mode Layar: Penuh Terkunci (Sesuai Profil)
+                      </>
+                    ) : (
+                      <>
+                        <Monitor className="w-3.5 h-3.5 text-blue-600" />
+                        Mode Layar: Normal Bebas (Sesuai Profil)
+                      </>
+                    )}
+                  </span>
+                </div>
+
                 {!cameraActive && (
                   <p className="mt-3 text-[10px] text-red-500 font-medium">
                     Jika kamera tidak muncul, pastikan Anda telah memberikan izin akses kamera di browser Anda.
@@ -624,9 +804,44 @@ export default function TakeExam() {
                   <p className="mt-1 max-w-2xl text-sm text-gray-500">Jawablah pertanyaan dengan teliti.</p>
                 </div>
               </div>
-              <div className={`flex items-center text-lg font-bold ${timeLeft < 300 ? 'text-red-600 animate-pulse' : 'text-gray-900'}`}>
-                <Clock className="mr-2 h-5 w-5" />
-                {formatTime(timeLeft)}
+
+              <div className="flex items-center gap-3">
+                {isFullscreenLockEnabled ? (
+                  !isFullscreen ? (
+                    <button
+                      onClick={requestFullScreen}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg shadow-sm transition-colors animate-pulse cursor-pointer"
+                    >
+                      <Maximize className="w-3.5 h-3.5" />
+                      Aktifkan Fullscreen
+                    </button>
+                  ) : (
+                    <div className="hidden sm:inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-100/90 px-3 py-1 rounded-full border border-emerald-300">
+                      <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                      Fullscreen Terkunci
+                    </div>
+                  )
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <div className="hidden sm:inline-flex items-center gap-1.5 text-xs font-bold text-blue-800 bg-blue-100/90 px-3 py-1 rounded-full border border-blue-300">
+                      <Monitor className="w-3.5 h-3.5 text-blue-600" />
+                      Layar Normal
+                    </div>
+                    <button
+                      onClick={isFullscreen ? exitFullScreen : requestFullScreen}
+                      title={isFullscreen ? "Kembali ke mode normal" : "Perbesar ke layar penuh (opsional)"}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer border border-gray-200"
+                    >
+                      <Maximize className="w-3.5 h-3.5" />
+                      <span className="hidden md:inline">{isFullscreen ? 'Kecilkan' : 'Perbesar'}</span>
+                    </button>
+                  </div>
+                )}
+
+                <div className={`flex items-center text-lg font-bold ${timeLeft < 300 ? 'text-red-600 animate-pulse' : 'text-gray-900'}`}>
+                  <Clock className="mr-2 h-5 w-5" />
+                  {formatTime(timeLeft)}
+                </div>
               </div>
             </div>
           </div>
@@ -863,6 +1078,28 @@ export default function TakeExam() {
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fullscreen Lock Screen Overlay (Hanya jika Mode Layar Full Terkunci aktif di Profil) */}
+      {isFullscreenLockEnabled && isCameraReady && !isFullscreen && !attempt?.endTime && !submissionResult && (
+        <div className="fixed inset-0 bg-slate-950/95 z-[999] flex items-center justify-center p-6 text-center backdrop-blur-md animate-in fade-in duration-200">
+          <div className="max-w-md bg-white rounded-3xl p-8 shadow-2xl border-4 border-amber-500 animate-in zoom-in-95 duration-150">
+            <div className="w-16 h-16 bg-amber-100 rounded-2xl mx-auto flex items-center justify-center text-amber-600 mb-4 shadow-inner">
+              <Lock className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-black text-gray-900 mb-2 uppercase">Layar Penuh Terputus!</h2>
+            <p className="text-gray-600 text-xs sm:text-sm mb-6 leading-relaxed">
+              Ujian dan Simulasi SMK AL-HIDAYAH mewajibkan mode <strong>Layar Penuh (Fullscreen)</strong>. Halaman ini terkunci dan tidak dapat ditutup sampai ujian selesai dikumpulkan.
+            </p>
+            <button 
+              onClick={requestFullScreen}
+              className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer text-sm"
+            >
+              <Maximize className="w-5 h-5" />
+              KEMBALI KE LAYAR PENUH (FULLSCREEN)
+            </button>
           </div>
         </div>
       )}
